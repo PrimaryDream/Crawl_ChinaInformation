@@ -1,0 +1,437 @@
+# coding=utf-8
+from get_html_by_url import *
+from urllib.request import quote
+import json
+import re
+import time
+import random
+import datetime
+import queue
+import threading
+companyQueue = queue.Queue()
+class ThreadGetData(threading.Thread):
+	def __init__(self, threadName, companyQueue):
+		super(ThreadGetData,self).__init__()
+		self.threadName = threadName
+		self.companyQueue = companyQueue
+		# 初始链接
+		self.url = "https://www.creditchina.gov.cn/api/credit_info_search?keyword="
+		# 信息概览
+		self.url_1 = "https://www.creditchina.gov.cn/api/credit_info_detail?encryStr="
+		# 行政许可
+		self.url_2_head = "https://www.creditchina.gov.cn/api/pub_permissions_name?name="
+		self.url_2_end = "&page=1&pageSize=10"
+		# 行政处罚
+		self.url_3_head = "https://www.creditchina.gov.cn/api/pub_penalty_name?name="
+		self.url_3_end = "&page=1&pageSize=10"
+		# 守信红名单
+		self.url_4_head = "https://www.creditchina.gov.cn/api/record_param?encryStr="
+		self.url_4_end = "&creditType=2&dataSource=0&pageNum=1&pageSize=10"
+		# 重点关注名单
+		self.url_5_head = "https://www.creditchina.gov.cn/api/record_param?encryStr="
+		self.url_5_end = "&creditType=4&dataSource=0&pageNum=1&pageSize=10"
+		# 黑名单信息
+		self.url_6_head = "https://www.creditchina.gov.cn/api/record_param?encryStr="
+		self.url_6_end = "&creditType=8&dataSource=0&pageNum=1&pageSize=10"
+
+	def run(self):
+		print(self.threadName + " begin--------")
+		while True:
+			if self.companyQueue.empty():
+				break
+			else:
+				self.company = self.companyQueue.get(block=False)
+				url = self.url + quote(self.company)
+				print("---------------------------------------------------------------------")
+				print("url : " + url)
+				response = SpiderHtml().get_html(url)
+				print("data : " + response)
+				self.pares_key(response)
+			time.sleep(random.randint(5,10))
+
+	# 获取关键值 "encryStr"
+	def pares_key(self, _res):
+		res = ""
+		try:
+			res = "{" + re.findall('\[{(.+?)}]', _res, re.S)[0] + "}"			# 尝试取result数据，返回list
+		except:
+			pass
+		if len(res) >0:
+			num = 0
+			try:
+				res_1 = re.findall("{(.+?)}", res, re.S)	# 若result有数据，则尝试取出每条公司信息，返回list
+			except:
+				pass
+			if len(res_1) > 0:
+				# 遍历list，若有多条数据，则记录最新数据为第几条
+				for each in res_1:
+					try:
+						json_res_1 = json.loads("{" + each + "}", strict=False)
+					except:
+						continue
+					if json_res_1.get('name') == self.company.replace(" ","").replace("（","(").replace("）",")").strip():
+						num+=1
+				print(self.company + " ->num : " + str(num))
+				if num > 0:
+					try:
+						# 以最新数据为准取key
+						key = res_1[num-1][res_1[num-1].index("encryStr")+11:res_1[num-1].index("\\n")]
+					except:
+						print("【" + self.company + "】" + "获取'encryStr'失败！")
+					url_1 = self.url_1 + quote(key)  								                # 基本信息
+					url_2 = self.url_2_head + quote(self.company) + self.url_2_end  # 行政许可
+					url_3 = self.url_3_head + quote(self.company) + self.url_3_end  # 行政处罚
+					url_4 = self.url_4_head + quote(key) + self.url_4_end  			    # 守信红名单
+					url_5 = self.url_5_head + quote(key) + self.url_5_end  			    # 重点关注名单
+					url_6 = self.url_6_head + quote(key) + self.url_6_end  			    # 黑名单
+					try:
+						self.get_infoJson(url_1)
+					except:
+						pass
+					try:
+						self.get_adminPermit(url_2)
+					except:
+						pass
+					try:
+						self.get_punishJson(url_3)
+					except:
+						pass
+					try:
+						self.get_redList(url_4)
+					except:
+						pass
+					try:
+						self.get_followList(url_5)
+					except:
+						pass
+					try:
+						self.get_blackListInfo(url_6)
+					except:
+						pass
+		else:
+			print("【" + self.company + "】 " + "暂无信息！")
+
+	# 获取【信息概览】
+	def get_infoJson(self, _url_1):
+		company_status = None
+		try:
+			print("url_1 : " + _url_1)
+			data_1 = SpiderHtml().get_html(_url_1)
+			try:
+				company_name = data_1[data_1.index("entName")+10:data_1.index("area")-3]				      # 公司名称
+				company_person = data_1[data_1.index("legalPerson")+14:data_1.index("idCard")-3]   		# 法人信息
+				company_status = data_1[data_1.index("entstatus")+11:data_1.index("legalPerson")-2]		# 运营状态
+				company_reg = data_1[data_1.index("regno")+8:data_1.index("organizationCode")-3]		  # 工商注册号
+				company_code = data_1[data_1.index("creditCode")+13:data_1.index("enttype")-3]	      # 统一社会信用代码
+				company_type = data_1[data_1.index("enttype")+10:data_1.index("dom")-3]					      # 企业类型
+				company_register = data_1[data_1.index("regorg")+9:data_1.index("apprdate")-3]			  # 登记机关
+				company_address = data_1[data_1.index("dom") + 6:data_1.index("regcap") - 3]  			  # 地址
+				company_create = data_1[data_1.index("esdate")+9:data_1.index("opfrom")-3][0:10]		  # 成立日期
+				sysUpdateTime = data_1[data_1.index("sysUpdateTime")+16:data_1.index('},"status"')-1] # 系统数据更新时间
+				if company_status == "1":
+					company_status = "续存"
+				elif company_status == "2":
+					company_status = "吊销"
+				elif company_status == "3":
+					company_status = "注销"
+				elif company_status == "4":
+					company_status = "迁出"
+			except:
+				pass
+			print("data_1 : "+ data_1)
+			print("【信息概览】 " + company_name + "\t" + company_person + "\t" + company_status + "\t" + company_reg + "\t" + company_code + "\t" + company_type + "\t" + company_register + "\t" + company_address + "\t" + company_create + "\t" + sysUpdateTime)
+			input_dataBase(self.company,company_person,company_status,company_reg,company_code,company_type,company_register,company_address,company_create,sysUpdateTime)
+		except:
+			print("【" + self.company + " 】 暂无'信息概览'信息")
+
+	# 获取【行政许可】
+	def get_adminPermit(self, _url_2):
+		_data_2= []
+		print("_url_2 : " + _url_2)
+		data_2 = SpiderHtml().get_html(_url_2)
+		print("data_2 : " + data_2)
+		try:
+			_data_2 = "{" + str(re.findall("\[{(.+?)}]", data_2, re.S)[0]) + "}"     # 尝试取result数据，返回list
+			print(_data_2)
+		except:
+			pass
+		if len(_data_2) >0:
+			try:
+				_data_2_ = re.findall("{(.+?)}", _data_2, re.S)        # 若result有数据，则尝试取出每条公司信息，返回list
+				print("_data_2 : " + str(_data_2_))
+			except:
+				pass
+			if len(_data_2_) > 0:
+				# 遍历list，若有多条数据
+				for each in _data_2_:
+					try:
+						json_data_2 = json.loads("{" + each + "}")
+					except:
+						print("行政许可 转换JSON失败")
+						continue
+					if json_data_2.get('xkXdr').replace(" ","") == self.company.company.replace(" ","").replace("（","(").replace("）",")").strip():
+						xkXdr = json_data_2.get('xkXdr').strip()  		# 公司名称
+						xkFr = json_data_2.get('xkFr').strip()  		  # 法人信息
+						xkWsh = json_data_2.get('xkWsh').strip()		  # 行政许可决定书文号
+						xkXmmc = json_data_2.get('xkXmmc').strip()		# 内容许可
+						xkSplb = json_data_2.get('xkSplb').strip()		# 审核类型
+						xkJdrq = json_data_2.get('xkJdrq').strip()		# 许可决定日期
+						xkJzq = json_data_2.get('xkJzq').strip()		  # 许可截止日期
+						xkYxq = json_data_2.get('xkYxq').strip()		  # 许可有效期
+						xkXzjg = json_data_2.get('xkXzjg').strip()		# 许可机关
+						areaCode = json_data_2.get('areaCode').strip()  # 省份编码
+						xkDfbm = json_data_2.get('xkDfbm').strip()		# 地方编码
+						xkSjc = json_data_2.get('xkSjc').strip()		  # 数据更新时间
+					
+						print("【行政许可】 " + xkWsh + "\t" + xkXmmc + "\t" + xkSplb + "\t" + xkXdr + "\t" + xkFr + "\t" + xkJdrq + "\t" + xkJzq + "\t" + xkYxq + "\t" + xkXzjg + "\t" + areaCode + "\t" + xkDfbm + "\t" + xkSjc)
+						input_dataBase(self.company,xkFr,xkWsh,xkXmmc,xkSplb,xkJdrq,xkJzq,xkYxq,xkXzjg,areaCode,xkDfbm,xkSjc)
+		else:
+			print("【" + self.company + "】 暂无'行政许可'信息")
+
+	# 获取【行政处罚】
+	def get_punishJson(self, _url_3):
+		print("_url_3 : " + _url_3)
+		data_3 = SpiderHtml().get_html(_url_3)
+		print("data_3 : " + data_3)
+		try:
+			_data_3 = "{" + re.findall('\[{(.+?)}]', data_3, re.S)[0] + "}"
+		except:
+			pass
+		if len(_data_3) > 0:
+			try:
+				_data_3_ = re.findall("{(.+?)}", _data_3, re.S)
+			except:
+				pass
+			if len(_data_3_) > 0:
+				for each in _data_3_:
+					try:
+						json_data_3 = json.loads("{" + each + "}")
+					except:
+						print("行政处罚转换JSON失败")
+						continue
+					try:
+						cfXdrMc = json_data_3.get('cfXdrMc').strip().replace(" ","")  			  # 处罚企业名称
+						cfXdrShxym = json_data_3.get('cfXdrShxym').strip().replace(" ","")  	# 统一社会信用代码
+						cfFr = json_data_3.get('cfFr').strip().replace(" ","")  				      # 法人代表人姓名
+						cfWsh = json_data_3.get('cfWsh').strip().replace(" ","")  				    # 决定书文号
+						cfCfmc = json_data_3.get('cfCfmc').strip().replace(" ","")  			    # 处罚名称
+						cfCflb1 = json_data_3.get('cfCflb1').strip().replace(" ","")  		  	# 处罚类别
+						cfJg = json_data_3.get('cfJg').strip().replace(" ","")  				      # 处罚结果
+						cfSy = json_data_3.get('cfSy').strip().replace(" ","")  			  	    # 处罚事由
+						cfYj = json_data_3.get('cfYj').strip().replace(" ","")  			      	# 处罚依据
+						cfXzjg = json_data_3.get('cfXzjg').strip().replace(" ","")  		    	# 处罚机关
+						cfJdrq = json_data_3.get('cfJdrq').strip().replace(" ","")  		    	# 处罚决定日期
+						cfQx = json_data_3.get('cfQx').strip().replace(" ","")  			      	# 处罚期限
+						cfSjc = json_data_3.get('cfSjc').strip().replace(" ","")  			    	# 数据更新时间
+					except:
+						pass
+					print("【" + self.company + "】 " + cfWsh + "\t" + cfCfmc + "\t" + cfXdrMc + "\t" + cfXdrShxym + "\t" + cfFr + "\t" + cfCflb1 + "\t" + cfJg + "\t" + cfSy + "\t" + cfYj + "\t" + cfXzjg + "\t" + cfJdrq + "\t" + cfQx + "\t" + cfSjc )
+					input_dataBase(self.company,cfXdrShxym,cfFr,cfWsh,cfCfmc,cfCflb1,cfJg,cfSy,cfYj,cfXzjg,cfJdrq,cfQx,cfSjc)
+		else:
+			print("【" + self.company + "】 暂无'行政处罚'信息" )
+
+	# 获取【守信红名单】
+	def get_redList(self, _url_4):
+		print("_url_4 : " + _url_4)
+		data_4 = SpiderHtml().get_html(_url_4)
+		print("data_4 : " + str(data_4))
+		try:
+			_data_4 = re.findall("\[(.+?)]", data_4, re.S)			# 尝试取result数据，返回list
+		except:
+			pass
+		if len(_data_4) > 0:
+			_data_4 = re.findall("{(.+?)}", _data_4[0], re.S)
+			if len(_data_4) > 0:
+				for each in _data_4:
+					try:
+						json_data_4 = json.loads("{" + each + "}")
+						try:
+							company_name = json_data_4.get('纳税人名称')
+							data_sourse = json_data_4.get('数据来源')
+							data_num = json_data_4.get('序号')
+							data_type = json_data_4.get('数据类别')
+							year_assess = json_data_4.get('评价年度')
+							file_name = json_data_4.get('文件名')
+							new_updateTime = json_data_4.get('最新更新日期')
+						except:
+							pass
+					except:
+						pass
+			print("【" + self.company + "】 " + data_type + "\t" + data_sourse + "\t" + data_num + "\t" + company_name + "\t" + year_assess + "\t" + new_updateTime + "\t" + file_name)
+			input_dataBase(self.company,data_sourse,data_num,data_type,year_assess,file_name,new_updateTime)
+		else:
+			print("【" + self.company + "】 暂无'守信红名单'信息")
+
+	# 重点关注名单
+	def get_followList(self, _url_5):
+		print("_url_5 : " + _url_5)
+		data_5 = SpiderHtml().get_html(_url_5)
+		print("data_5 : " + data_5)
+		try:
+			_data_5 = re.findall("\[(.+?)]",data_5,re.S)
+		except:
+			pass
+		if len(_data_5) > 0:
+			try:
+				json_data_5 = json.loads(_data_5[0])
+				try:
+					company_name = json_data_5.get('企业名称')
+					company_reg = json_data_5.get('注册号')
+					company_person = json_data_5.get('法定代表人')
+					data_type = json_data_5.get('数据类别')
+					data_sourse = json_data_5.get('数据来源')
+					reason_type = json_data_5.get('列入经营异常名录原因类型名称')
+					set_date = json_data_5.get('设立日期')
+					office_name = json_data_5.get('列入决定机关名称')
+					new_update = json_data_5.get('最新更新日期')
+				except:
+					pass
+				print("【重点关注名单】 " + data_type + "\t" + data_sourse + "\t" + company_name + "\t" + company_reg + "\t" + company_person + "\t" + reason_type + "\t" + set_date + "\t" + office_name + "\t" + new_update)
+				input_dataBase(self.company,company_reg,company_person,data_type,data_sourse,reason_type,set_date,office_name,new_update)
+			except:
+				print("'重点关注名单'转换JSON失败")
+		else:
+			print("【" + self.company + "】 暂无'重点关注名单'信息")
+
+	# 获取【黑名单】
+	def get_blackListInfo(self, _url_6):
+		print("_url_6 : " + _url_6)
+		data_6 =SpiderHtml().get_html(_url_6)
+		print("data_6 : " + data_6)
+		try:
+			data_6 = re.findall("\[(.+?)]",data_6,re.S)		# 尝试取出result数据
+		except:
+			pass
+		# 若result有数据，则取出来转化为JSON
+		if len(data_6) > 0:
+			try:
+				json_data_6 = json.loads(data_6[0])
+				print(json_data_6)
+				try:
+						data_type = json_data_6.get('数据类别')
+						data_source = json_data_6.get('数据来源')
+						case_number = json_data_6.get('案号')
+						company_name = json_data_6.get('失信被执行人名称')
+						company_person = json_data_6.get('企业法人姓名')
+						exe_court = json_data_6.get('执行法院')
+						exe_area = json_data_6.get('地域名称')
+						exe_file = json_data_6.get('执行依据文号')
+						exe_unit = json_data_6.get('作出执行依据单位')
+						exe_value = json_data_6.get('法律生效文书确定的义务')
+						exe_state = json_data_6.get('被执行人的履行情况')
+						situation = json_data_6.get('失信被执行人具体情形')
+						pubdate = json_data_6.get('发布时间')
+						register_time = json_data_6.get('立案时间')
+						perform = json_data_6.get('已履行部分')
+						no_perform = json_data_6.get('未履行部分')
+						new_update = json_data_6.get('最新更新日期')
+				except:
+					pass
+				print("【黑名单】信息：" + data_type +"\t"+ data_source +"\t"+ case_number +"\t"+ company_name +"\t"+ company_person +"\t"+ exe_court +"\t"+ exe_area +"\t"+ exe_file +"\t"+ exe_unit +"\t"+ exe_value +"\t"+ exe_state +"\t"+ situation +"\t"+ pubdate +"\t"+ register_time +"\t"+ perform +"\t"+ no_perform +"\t"+ new_update)
+				try:
+					input_dataBase(data_type,data_source,case_number,self.company,company_person,exe_court,exe_area,exe_file,exe_unit,exe_value,exe_state,situation,pubdate,register_time,perform,no_perform,new_update)
+				except:
+					print("插入失败")
+			except:
+				print("获取 JSON 数据失败！")
+		else:
+			print("【" + self.company + "】 暂无'黑名单'信息")
+
+# 写入 数据库
+def input_dataBase(*valtuple):
+	create_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+	# 插入 基础信息
+	if len(valtuple) == 10:
+		select_sql = "SELECT * FROM company_baseinfo WHERE company_name = '%s'" % valtuple[0]
+		insert_sql = "INSERT IGNORE INTO company_baseinfo (company_name,company_person,company_status,company_reg,company_code,company_type,company_register,company_address,company_create,sysUpdateTime,create_time) VALUES('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s')" % (valtuple[0],valtuple[1],valtuple[2],valtuple[3],valtuple[4],valtuple[5],valtuple[6],valtuple[7],valtuple[8],valtuple[9],create_time)
+		update_sql = "UPDATE company_test SET crawl_flag = '1' WHERE company_name = '%s'" % valtuple[0]
+		if Mysql().update(update_sql):
+			print("【" + str(valtuple[0]) + "】 更新成功")
+			print(update_sql)
+		else:
+			print("【" + str(valtuple[0]) + "】 更新失败")
+			print("update_sql : " + update_sql)
+			print(update_sql)
+		if len(Mysql().query(select_sql)) == 0:
+			state = Mysql().insert(insert_sql)
+			if state:
+				print("插入成功！")
+			else:
+				print("【插入失败】")
+				print(insert_sql)
+		else:
+			print("已有数据，放弃插入！")
+	# 插入 行政许可信息
+	if len(valtuple) == 12:
+		xk_insert_sql = "INSERT IGNORE INTO company_xuke_info (company_name,company_person,XKWSH,XKNR,XK_TYPE,XK_START,XK_END,XK_QX,XK_JG,AREA_CODE,XK_DFBM,NEW_UPTIME,CREATE_TIME) VALUES('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s')" % (valtuple[0],valtuple[1],valtuple[2],valtuple[3],valtuple[4],valtuple[5],valtuple[6],valtuple[7],valtuple[8],valtuple[9],valtuple[10],valtuple[11],create_time)
+		if Mysql().insert(xk_insert_sql):
+			print("插入成功!")
+		else:
+			print("xk_insert_sql : " + xk_insert_sql)
+			print("【插入失败】")
+	# 插入 行政处罚信息
+	if len(valtuple) == 13:
+		cf_insert_sql = "INSERT IGNORE INTO company_chufa_info (company_name,company_code,company_person,cfWsh,cfName,cfType,cfJg,cfSy,cfYj,cfZxjg,cfRq,cfQx,newUpTime,create_time) VALUES ('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s')" % (valtuple[0],valtuple[1],valtuple[2],valtuple[3],valtuple[4],valtuple[5],valtuple[6],valtuple[7],valtuple[8],valtuple[9],valtuple[10],valtuple[11],valtuple[12],create_time)
+		if Mysql().insert(cf_insert_sql):
+			print("插入成功!")
+		else:
+			print("cf_insert_sql : " + cf_insert_sql)
+			print("【插入失败】")
+	# 插入 守信红名单信息
+	if len(valtuple) == 7:
+		# select_sql = "SELECT * FROM company_redList WHERE company_name ='%s'" % valtuple[0]
+		red_insert_sql = "INSERT IGNORE INTO company_redList (company_name,data_sourse,data_num,data_type,year_assess,file_name,new_updateTime,create_time) VALUES ('%s','%s','%s','%s','%s','%s','%s','%s')" % (valtuple[0],valtuple[1],valtuple[2],valtuple[3],valtuple[4],valtuple[5],valtuple[6],create_time)
+		if Mysql().insert(red_insert_sql):
+			print("插入成功!")
+		else:
+			print("red_insert_sql : " + red_insert_sql)
+			print("【插入失败】")
+	# 插入 重点关注名单信息
+	if len(valtuple) == 9:
+		# select_sql = "SELECT * FROM company_zdgz_info WHERE company_name = '%s'" % valtuple[0]
+		zd_insert_sql = "INSERT IGNORE INTO company_zdgz_info (company_name,company_reg,company_person,data_type,data_sourse,reason_type,set_date,office_name,new_update,create_time) VALUES ('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s')" % (valtuple[0],valtuple[1],valtuple[2],valtuple[3],valtuple[4],valtuple[5],valtuple[6],valtuple[7],valtuple[8],create_time)
+		if Mysql().insert(zd_insert_sql):
+			print("插入成功!")
+		else:
+			print("zd_insert_sql : " + zd_insert_sql)
+			print("【插入失败】")
+	# 插入 黑名单信息
+	if len(valtuple) == 17:
+		# select_sql = "SELECT * FROM company_blackList WHERE company_name = '%s'" % valtuple[3]
+		black_insert_sql = "INSERT IGNORE into company_blackList (data_type,data_source,case_number,company_name,company_person,exe_court,exe_area,exe_file,exe_unit,exe_value,exe_state,situation,pubdate,register_time,perform,no_perform,new_update,create_time) VALUES ('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s')" % (valtuple[0],valtuple[1],valtuple[2],valtuple[3],valtuple[4],valtuple[5],valtuple[6],valtuple[7],valtuple[8],valtuple[9],valtuple[10],valtuple[11],valtuple[12],valtuple[13],valtuple[14],valtuple[15],valtuple[16],create_time)
+		if Mysql().insert(black_insert_sql):
+			print("插入成功!")
+		else:
+			print("black_insert_sql : " + black_insert_sql)
+			print("【插入失败】")
+
+if __name__ == '__main__':
+	start = time.clock()
+	#_sql = 'SELECT company_name FROM company_test WHERE crawl_flag = 0'
+	#data = Mysql().query(_sql)
+	#print(len(data))
+	#for company in data:
+		#companyQueue.put(company[0])
+
+	# 兰州鑫源汽车贸易有限公司 重点关注名单
+	# 三一重工股份有限公司 行政处罚
+	# 北京恒通博联科技有限公司 守信红名单
+  
+	company = ['上海颐景建筑设计有限公司']
+	for each in company:
+	    companyQueue.put(each)
+
+	# 采集线程的列表
+	threadCrawl = []
+	crawList = ['采集线程1号']
+	for threadName in crawList:
+		thread = ThreadGetData(threadName, companyQueue)
+		thread.start()
+		threadCrawl.append(thread)
+
+	while not companyQueue.empty():
+		pass
+
+	end = time.clock()
+	print('Running time: %s Seconds' % (end - start))
+
